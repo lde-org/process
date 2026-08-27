@@ -77,7 +77,7 @@ end
 --- Spawn a child process.
 ---@param name string
 ---@param args string[]
----@param opts { cwd: string?, env: table<string,string>?, stdin: string?, stdout: "pipe"|"inherit"|"null"?, stderr: "pipe"|"inherit"|"null"? }?
+---@param opts { cwd: string?, env: table<string,string>?, stdin: string?, stdout: "pipe"|"inherit"|"null"?, stderr: "pipe"|"inherit"|"null"?, unsafe: boolean? }?
 ---@return { pid: number, stdoutFd: number?, stderrFd: number? }?, string?
 function M.spawn(name, args, opts)
 	opts             = opts or {}

@@ -162,8 +162,15 @@ end
 
 ---@param name string
 ---@param args string[]
+---@param unsafe boolean? # true: join name and args with spaces verbatim (no quoting/escaping); the caller must pre-quote (e.g. a fully-quoted command string handed to cmd /c)
 ---@return string
-local function buildCmdLine(name, args)
+local function buildCmdLine(name, args, unsafe)
+	if unsafe then
+		local parts = { name }
+		for _, a in ipairs(args) do parts[#parts + 1] = a end
+		return table.concat(parts, " ")
+	end
+
 	local parts = { escapeArg(name) }
 	for _, a in ipairs(args) do parts[#parts + 1] = escapeArg(a) end
 	return table.concat(parts, " ")
@@ -220,7 +227,7 @@ end
 
 ---@param name string
 ---@param args string[]
----@param opts { cwd: string?, env: table<string,string>?, stdin: string?, stdout: "pipe"|"inherit"|"null"?, stderr: "pipe"|"inherit"|"null"? }?
+---@param opts { cwd: string?, env: table<string,string>?, stdin: string?, stdout: "pipe"|"inherit"|"null"?, stderr: "pipe"|"inherit"|"null"?, unsafe: boolean? }?
 ---@return { handle: ffi.cdata*, pid: number, stdoutHandle: ffi.cdata*?, stderrHandle: ffi.cdata*? }?, string?
 function M.spawn(name, args, opts)
 	opts             = opts or {}
@@ -265,7 +272,7 @@ function M.spawn(name, args, opts)
 		si.hStdError = kernel32.GetStdHandle(STD_ERROR_HANDLE)
 	end
 
-	local cmdStr   = buildCmdLine(name, args)
+	local cmdStr   = buildCmdLine(name, args, opts.unsafe)
 	local cmdLine  = CharBuf(#cmdStr + 1, cmdStr)
 	local envStr   = opts.env and buildEnvBlock(opts.env) or nil
 	local envBlock = envStr and ffi.cast("void*", envStr) or nil

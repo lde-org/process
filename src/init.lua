@@ -13,6 +13,7 @@ local raw = isWindows
 ---@field stdin string?
 ---@field stdout process.Stdio?
 ---@field stderr process.Stdio?
+---@field unsafe boolean? # Windows only: pass name and args through verbatim (space-joined, no quoting/escaping). Use when args already form a fully-quoted shell command string (e.g. { "/c", cmd } for cmd.exe, whose quote handling is incompatible with per-arg escaping); the caller owns quoting. No-op on POSIX, where args are passed to the child directly.
 
 ---@class process.Child
 ---@field pid number
@@ -73,7 +74,8 @@ function process.spawn(name, args, opts)
 		env    = opts.env,
 		stdin  = opts.stdin,
 		stdout = opts.stdout or "null",
-		stderr = opts.stderr or "null"
+		stderr = opts.stderr or "null",
+		unsafe = opts.unsafe
 	})
 	if not result then return nil, err end
 
@@ -108,7 +110,8 @@ function process.exec(name, args, opts)
 		env    = opts.env,
 		stdin  = opts.stdin,
 		stdout = opts.stdout or "pipe",
-		stderr = opts.stderr or "pipe"
+		stderr = opts.stderr or "pipe",
+		unsafe = opts.unsafe
 	})
 	if not result then return nil, nil, err end
 
