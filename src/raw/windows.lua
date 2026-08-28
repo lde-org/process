@@ -55,6 +55,7 @@ ffi.cdef([[
 	BOOL   SetHandleInformation(HANDLE hObject, DWORD dwMask, DWORD dwFlags);
 	BOOL   ReadFile(HANDLE hFile, void* lpBuffer, DWORD nNumberOfBytesToRead, DWORD* lpNumberOfBytesRead, void* lpOverlapped);
 	BOOL   WriteFile(HANDLE hFile, const void* lpBuffer, DWORD nNumberOfBytesToWrite, DWORD* lpNumberOfBytesWritten, void* lpOverlapped);
+	BOOL   PeekNamedPipe(HANDLE hNamedPipe, void* lpBuffer, DWORD nBufferSize, DWORD* lpBytesRead, DWORD* lpTotalBytesAvail, DWORD* lpBytesLeftThisMessage);
 	DWORD  WaitForSingleObject(HANDLE hHandle, DWORD dwMilliseconds);
 	BOOL   GetExitCodeProcess(HANDLE hProcess, DWORD* lpExitCode);
 	BOOL   TerminateProcess(HANDLE hProcess, DWORD uExitCode);
@@ -307,17 +308,43 @@ function M.spawn(name, args, opts)
 	}
 end
 
+--- Read whatever output is currently available from a pipe handle into buf
+--- without blocking. Returns "eof" once the writer has closed (the handle is
+--- closed by this call); "open" while more data may still arrive.
 ---@param handle ffi.cdata*
----@return string
-function M.readHandle(handle)
-	local buf    = CharBuf(4096)
-	local read   = DwordBox()
-	local chunks = {}
-	while kernel32.ReadFile(handle, buf, 4096, read, nil) ~= 0 and read[0] > 0 do
-		chunks[#chunks + 1] = ffi.string(buf, read[0])
+---@param buf string.buffer
+---@return "eof"|"open"
+function M.readAvailable(handle, buf)
+	while true do
+		-- PeekNamedPipe never blocks: with a NULL buffer it just reports how
+		-- many bytes are queued, and returns FALSE (ERROR_BROKEN_PIPE) once
+		-- the writer closed and nothing is left.
+		local avail = DwordBox()
+		if kernel32.PeekNamedPipe(handle, nil, 0, nil, avail, nil) == 0 then
+			kernel32.CloseHandle(handle)
+			return "eof"
+		end
+		if avail[0] == 0 then return "open" end
+		local n = math.min(avail[0], 65536)
+		local chunk = CharBuf(n)
+		local read = DwordBox()
+		if kernel32.ReadFile(handle, chunk, n, read, nil) ~= 0 and read[0] > 0 then
+			buf:put(ffi.string(chunk, read[0]))
+		else
+			kernel32.CloseHandle(handle)
+			return "eof"
+		end
 	end
-	kernel32.CloseHandle(handle)
-	return table.concat(chunks)
+end
+
+--- Wait up to ms for the process to exit. Returns true once it has (or the
+--- handle is no longer valid, e.g. closed by a prior poll()).
+---@param handle ffi.cdata*
+---@param ms number
+---@return boolean exited
+function M.waitTimeout(handle, ms)
+	-- WAIT_OBJECT_0 == 0; WAIT_TIMEOUT == 0x102; WAIT_FAILED == 0xFFFFFFFF
+	return kernel32.WaitForSingleObject(handle, ms) == 0
 end
 
 ---@param handle ffi.cdata*

@@ -125,6 +125,42 @@ test.it("spawn Child:poll returns nil while running", function()
 	child:wait()
 end)
 
+test.it("spawn+poll drains a child that emits more than the pipe buffer", function()
+	-- A child writing more than the 64KB pipe buffer used to deadlock a
+	-- spawn+poll consumer: poll() only checked the process state and never
+	-- drained the pipes, so the child blocked on a full pipe forever
+	-- (luaossl's compiler emits ~120KB of warnings). poll() must drain.
+	local line = "warning-fake-diagnostic-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding"
+	local cmd = isWindows
+		and ("for /l %i in (1,1,700) do @echo " .. line)
+		or ("i=0; while [ $i -lt 700 ]; do echo " .. line .. "; i=$((i+1)); done")
+	local child, err = process.spawn(sh, { shc, cmd }, { stdout = "pipe", stderr = "pipe" })
+	test.truthy(child, err)
+	local code
+	for _ = 1, 100000 do -- bounded: the old code hangs here (child never exits)
+		code = child:poll()
+		if code ~= nil then break end
+	end
+	test.equal(code, 0)
+	local _, stdout, stderr = child:wait()
+	local total = #(stdout or "") + #(stderr or "")
+	test.truthy(total > 65536, "captured " .. total .. " bytes, expected > 64KB")
+end)
+
+test.it("spawn Child:poll then :wait returns the captured output", function()
+	local cmd = isWindows and "echo hi" or "printf hi"
+	local child, err = process.spawn(sh, { shc, cmd }, { stdout = "pipe" })
+	test.truthy(child, err)
+	local code
+	for _ = 1, 10000 do
+		code = child:poll()
+		if code ~= nil then break end
+	end
+	test.equal(code, 0)
+	local _, stdout = child:wait()
+	test.truthy(stdout and stdout:find("hi"))
+end)
+
 --
 -- stdio modes
 --

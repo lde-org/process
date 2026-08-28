@@ -26,6 +26,7 @@ local SIGKILL  = 9
 local O_WRONLY = 1
 local POLLIN   = 1
 local POLLHUP  = 16
+local EINTR    = 4
 
 ---@diagnostic disable: assign-type-mismatch # Ignore incessant ffi type cast annoyance
 
@@ -132,67 +133,54 @@ function M.spawn(name, args, opts)
 	}
 end
 
+--- Read whatever output is currently available from a pipe fd into buf
+--- without blocking. Returns "eof" once the writer has closed (the fd is
+--- closed by this call); "open" while more data may still arrive.
 ---@param fd number
----@return string
-function M.readFd(fd)
-	local out = sb.new()
+---@param buf string.buffer
+---@return "eof"|"open"
+function M.readAvailable(fd, buf)
 	while true do
-		local ptr, len = out:reserve(4096)
-		local n = ffi.C.read(fd, ptr, len)
-		if n > 0 then
-			out:commit(n)
+		local fds = PollFds(1)
+		fds[0].fd = fd
+		fds[0].events = POLLIN
+		-- poll(0) never blocks: 0 = nothing available, >0 = readable (or HUP), -1 = error
+		if ffi.C.poll(fds, 1, 0) <= 0 then return "open" end
+		if bit.band(fds[0].revents, POLLIN) ~= 0 then
+			local ptr, len = buf:reserve(4096)
+			local n = ffi.C.read(fd, ptr, len)
+			if n > 0 then
+				buf:commit(n)
+			elseif n < 0 and ffi.errno() == EINTR then
+				-- Interrupted by a signal; retry the read
+			else
+				buf:commit(0)
+				ffi.C.close(fd)
+				return "eof"
+			end
 		else
-			out:commit(0); break
+			-- POLLHUP/POLLERR with nothing more to read: drain any residual
+			-- bytes (read returns what remains, then 0) and treat as EOF.
+			local ptr, len = buf:reserve(4096)
+			local n = ffi.C.read(fd, ptr, len)
+			if n > 0 then buf:commit(n) end
+			ffi.C.close(fd)
+			return "eof"
 		end
 	end
-	ffi.C.close(fd)
-	return out:tostring()
 end
 
---- Drain two fds concurrently using poll() to avoid deadlock.
----@param outFd number
----@param errFd number
----@return string, string
-function M.readFds(outFd, errFd)
-	local outBuf, errBuf = sb.new(), sb.new()
+--- Block until either pipe has data or hits EOF. Used by Child:wait to drain
+--- both pipes without busy-waiting. Fds already drained to EOF may be nil.
+---@param outFd number?
+---@param errFd number?
+function M.waitPipe(outFd, errFd)
 	local fds = PollFds(2)
-	local outDone, errDone = false, false
-	while not outDone or not errDone do
-		fds[0].fd = outDone and -1 or outFd
-		fds[0].events = POLLIN
-		fds[1].fd = errDone and -1 or errFd
-		fds[1].events = POLLIN
-		ffi.C.poll(fds, 2, -1)
-		if not outDone then
-			if bit.band(fds[0].revents, POLLIN) ~= 0 then
-				local ptr, len = outBuf:reserve(4096)
-				local n = ffi.C.read(outFd, ptr, len)
-				if n > 0 then
-					outBuf:commit(n)
-				else
-					outBuf:commit(0); outDone = true
-				end
-			elseif fds[0].revents ~= 0 then
-				outDone = true
-			end
-		end
-		if not errDone then
-			if bit.band(fds[1].revents, POLLIN) ~= 0 then
-				local ptr, len = errBuf:reserve(4096)
-				local n = ffi.C.read(errFd, ptr, len)
-				if n > 0 then
-					errBuf:commit(n)
-				else
-					errBuf:commit(0); errDone = true
-				end
-			elseif fds[1].revents ~= 0 then
-				errDone = true
-			end
-		end
-	end
-	ffi.C.close(outFd)
-	ffi.C.close(errFd)
-	return outBuf:tostring(), errBuf:tostring()
+	fds[0].fd = outFd or -1
+	fds[0].events = POLLIN
+	fds[1].fd = errFd or -1
+	fds[1].events = POLLIN
+	ffi.C.poll(fds, 2, -1)
 end
 
 ---@param pid number

@@ -2,7 +2,7 @@
 	"name": "process",
 	"description": "A cross platform process library for lde.",
 	"authors": ["David Cruz <david@bycruz.dev>"],
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"dependencies": {},
 	"devDependencies": {
 		"lde-test": { "git": "https://github.com/lde-org/lde" }
