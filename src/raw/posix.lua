@@ -16,7 +16,19 @@ ffi.cdef([[
 	int   setenv(const char* name, const char* value, int overwrite);
 	int   chdir(const char* path);
 	void  _exit(int status);
+]])
+
+local function ensureStruct(name, definition)
+	local ok, size = pcall(ffi.sizeof, name)
+	if ok and size ~= nil then return end
+	ffi.cdef(definition)
+end
+
+ensureStruct("struct pollfd", [[
 	struct pollfd { int fd; short events; short revents; };
+]])
+
+ffi.cdef([[
 	int   poll(struct pollfd* fds, unsigned long nfds, int timeout);
 ]])
 
